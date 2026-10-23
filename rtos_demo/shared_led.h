@@ -2,7 +2,7 @@
  * shared_led.h
  *
  *  Created on: 24 Sept 2026
- *      Author: student
+ *      Author: Albert Minasyan albert.minasyan@gmail.com
  */
 
 #ifndef SHARED_LED_H

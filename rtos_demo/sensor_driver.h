@@ -2,7 +2,7 @@
  * sensor_driver.h
  *
  *  Created on: 24 Sept 2026
- *      Author: student
+ *      Author: Albert Minasyan albert.minasyan@gmail.com
  */
 
 #ifndef SENSOR_DRIVER_H

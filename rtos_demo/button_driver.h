@@ -2,7 +2,7 @@
  * button_driver.h
  *
  *  Created on: 24 Sept 2026
- *      Author: student
+ *      Author: Albert Minasyan albert.minasyan@gmail.com
  */
 
 #ifndef BUTTON_DRIVER_H

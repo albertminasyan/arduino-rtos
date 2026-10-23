@@ -1,11 +1,20 @@
+/*
+ * rtos_demo.ino
+ *
+ *  Created on: 24 Sept 2026
+ *      Author: Albert Minasyan albert.minasyan@gmail.com
+ */
+
 #include <Arduino_FreeRTOS.h>
 #include <queue.h>
 #include <semphr.h>
 #include "button_driver.h"
 #include "sensor_driver.h"
 #include "shared_led.h"
+#include <dbg.h>
 
-typedef struct {
+typedef struct
+{
     const char *source;
     int value;
 } log_msg_t;
@@ -15,15 +24,11 @@ static SemaphoreHandle_t button_sem;
 static SemaphoreHandle_t led_mutex;
 
 /* High priority: reacts to the "urgent hardware event" */
-void button_task(void *pv) {
-//	Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
-
+void button_task(void *pv)
+{
     log_msg_t msg;
-    for (;;) {
+    for (;;)
+    {
         if (xSemaphoreTake(button_sem, portMAX_DELAY) == pdTRUE) {
             msg.source = "BUTTON";
             msg.value  = 1;
@@ -34,16 +39,11 @@ void button_task(void *pv) {
 }
 
 /* Medium priority: periodic "peripheral" polling */
-void sensor_task(void *pv) {
-
-//	Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
-
+void sensor_task(void *pv)
+{
     log_msg_t msg;
-    for (;;) {
+    for (;;)
+    {
         msg.source = "SENSOR";
         msg.value  = sensor_driver_read();
         xQueueSend(log_queue, &msg, pdMS_TO_TICKS(50));
@@ -53,17 +53,13 @@ void sensor_task(void *pv) {
 }
 
 /* Low priority: drains the queue, simulates a shared bus/UART consumer */
-void logger_task(void *pv) {
-
-//	Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
-
+void logger_task(void *pv)
+{
     log_msg_t msg;
-    for (;;) {
-        if (xQueueReceive(log_queue, &msg, portMAX_DELAY) == pdTRUE) {
+    for (;;)
+    {
+        if (xQueueReceive(log_queue, &msg, portMAX_DELAY) == pdTRUE)
+        {
             Serial.print(msg.source);
             Serial.print(": ");
             Serial.println(msg.value);
@@ -71,14 +67,10 @@ void logger_task(void *pv) {
     }
 }
 
-void setup() {
+void setup()
+{
+	DBG();
     Serial.begin(9600);
-
-//	Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
 
     log_queue  = xQueueCreate(8, sizeof(log_msg_t));
     button_sem = xSemaphoreCreateBinary();
@@ -88,22 +80,11 @@ void setup() {
     sensor_driver_init(A0);
     shared_led_init(8, led_mutex);
 
-//	Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
-
     /* priorities: button (urgent ISR-driven) > sensor (periodic) > logger (bulk/background) */
     xTaskCreate(button_task, "btn", 128, NULL, 3, NULL);
     xTaskCreate(sensor_task, "sns", 128, NULL, 2, NULL);
     xTaskCreate(logger_task, "log", 128, NULL, 1, NULL);
-
-//    Serial.print(__FILE__);
-//	Serial.print(":");
-//	Serial.print(__LINE__);
-//	Serial.print(" ");
-//	Serial.println(__FUNCTION__);
+	DBG();
 }
 
 void loop() { /* unused — scheduler owns execution */ }
