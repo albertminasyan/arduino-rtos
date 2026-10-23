@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sensor task (sns) control flow</title>
+<style>
+:root{--bg:#f7f8fa;--fg:#1f2937;--mut:#6b7280;--card:#fff;--ln:#9ca3af;box-sizing:border-box;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f172a;--fg:#e5e7eb;--mut:#9ca3af;--card:#1e293b;--ln:#64748b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f172a;--fg:#e5e7eb;--mut:#9ca3af;--card:#1e293b;--ln:#64748b;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1240px;margin:0 auto;padding:14px 24px 28px}
+.top{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+h1{font-size:22px;margin:0;margin-right:auto}
+.lg{display:flex;gap:12px;font-size:12px;color:var(--mut)}.lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
+button,select{font:inherit;font-size:14px;padding:7px 14px;border-radius:8px;border:1px solid var(--ln);background:var(--card);color:var(--fg);cursor:pointer}
+.lab{font-size:13px;font-weight:700;color:var(--mut);margin:0 0 8px}
+#stage{position:relative}
+.row{display:grid;grid-template-columns:repeat(6,1fr);gap:18px;margin-bottom:44px}
+@media(max-width:900px){.row{grid-template-columns:repeat(2,1fr)}}
+.blk{border-radius:10px;color:#fff;padding:10px 12px;min-height:112px;opacity:.55;transition:opacity .3s,box-shadow .3s;cursor:pointer}
+.blk.seen{opacity:.92}.blk.on{opacity:1;box-shadow:0 0 0 4px #f59e0b}
+.blk b{display:block;font-size:14.5px}.blk code{display:block;font-size:11.5px;opacity:.92;margin:3px 0 5px;word-break:break-all}.blk span{font-size:13px}
+.note{font-size:13px;font-style:italic;color:var(--mut);align-self:center;padding:0 6px}
+#ln{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+#ball{position:absolute;left:0;top:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:5;pointer-events:none}
+#cap{margin-top:6px;background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px 16px;display:flex;gap:14px;align-items:flex-start}
+#cn{flex:none;min-width:44px;height:38px;padding:0 8px;border-radius:9px;color:#fff;font-weight:700;display:grid;place-items:center;font-size:16px}
+#ct b{font-size:17px}#ct code{margin-left:10px;font-size:12.5px;color:var(--mut)}#ct p{margin:5px 0 0;font-size:14.5px;line-height:1.5}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.chips span{font-size:12.5px;border:1px solid var(--ln);border-radius:20px;padding:2px 10px;color:var(--mut)}.chips b{font-size:12.5px;color:var(--fg)}
+</style></head><body><main>
+<div class="top"><h1>Sensor task (sns, priority 2): one full control-flow cycle</h1>
+<div class="lg"><span><i style="background:#6b7280"></i>trigger</span><span><i style="background:#7c3aed"></i>FreeRTOS</span><span><i style="background:#be185d"></i>your code</span></div></div>
+<div class="bar"><button id="pp">Pause</button><button id="st">Step</button><button id="rs">Restart</button><select id="sp"><option value="3200">Slow</option><option value="2200" selected>Normal</option><option value="1200">Fast</option></select></div>
+<div id="stage">
+<svg id="ln"></svg><div id="ball"></div>
+<p class="lab">A.  sns finishes and blocks itself. Trigger: sns calls vTaskDelay (no interrupt)</p><div class="row" id="r1"></div>
+<p class="lab">B.  sns waits, another task runs. Trigger: WDT tick every 15 ms</p><div class="row" id="r2"></div>
+<p class="lab">C.  wake-up. Trigger: the tick that reaches sns's wake time</p><div class="row" id="r3"></div>
+</div>
+<div id="cap"><div id="cn"></div><div id="ct"></div></div>
+<script>
+const C={hw:'#6b7280',rtos:'#7c3aed',app:'#be185d'};
+// [num,name,file,short,color,detail,sns state,CPU runs]
+const B=[
+['16','sns runs','rtos_demo.ino','ADC read, xQueueSend, then vTaskDelay(500 ms)','app','sns (priority 2) is running. It reads the ADC, may send the value to log_queue (this makes log ready), then calls vTaskDelay(500 ms).','running','sns'],
+['11.1','vTaskDelay','tasks.c','sns to delayed list, wake = tick + 33','rtos','Puts sns on the delayed list with wake time = xTickCount + 33 (500 ms / 15 ms). sns is no longer in a ready list. Then it asks for a switch.','moving to delayed list','sns'],
+['11','vPortYield','port.c','task-made switch, no interrupt','hw','Task-initiated entry (taskYIELD_WITHIN_API). A naked function reached by a normal call, not by an interrupt.','delayed','sns'],
+['12','portSAVE_CONTEXT','port.c','push r0-r31, SREG; SP into sns TCB','rtos','Pushes r0, SREG and r1..r31 on sns\'s own stack and stores SP in sns\'s TCB (pxTopOfStack). sns is frozen.','delayed','sns (switching out)'],
+['14','vTaskSwitchContext','tasks.c','best ready task: log (1) or idle (0). 13 skipped','rtos','Block 13 is skipped: there is no tick here. The scheduler scans the ready lists from the top: log (1) if the queue holds an item, otherwise idle (0), and sets pxCurrentTCB.','delayed','switching to log or idle'],
+['15','portRESTORE_CONTEXT','port.c','SP from TCB, pop regs; that task runs','rtos','Loads the chosen task\'s SP, pops its registers and returns into it. Control stays with log or idle until the tick wakes sns.','delayed','log or idle'],
+['16.1','idle or log runs','tasks.c / your code','log prints and blocks, then idle loops','app','log prints the queue item over UART and blocks on the empty queue. Then idle (0) loops. sns is not polling: it sits on the delayed list.','delayed','log / idle'],
+['11','WDT tick ISR','port.c','every 15 ms: ISR(portSCHEDULER_ISR)','hw','The watchdog interrupt fires every 15 ms: ISR(portSCHEDULER_ISR) calls vPortYieldFromTick().','delayed','log / idle (interrupted)'],
+['12','portSAVE_CONTEXT','port.c','interrupted task saved on its own stack','rtos','The interrupted task (idle or log) is saved on its own stack and its SP is stored in its TCB.','delayed','log / idle (interrupted)'],
+['13','xTaskIncrementTick','tasks.c','++tick; wake time not reached, returns false','rtos','Increments xTickCount and compares it with xNextTaskUnblockTime. sns\'s wake time is not reached, nothing moves, it returns false.','delayed','log / idle'],
+['15','portRESTORE_CONTEXT','port.c','same task resumes (14 skipped)','rtos','No switch was requested, so block 14 is skipped. The same task resumes where the tick interrupted it. This repeats every 15 ms.','delayed','log / idle'],
+['11','WDT tick ISR','port.c','tick interrupts idle (or log)','hw','About 33 ticks after vTaskDelay: the same tick ISR, now the one that reaches sns\'s wake time.','delayed (wake tick)','log / idle (interrupted)'],
+['12','portSAVE_CONTEXT','port.c','idle / log context saved','rtos','idle or log is saved on its own stack, as on every tick.','delayed (wake tick)','log / idle (interrupted)'],
+['13','xTaskIncrementTick','tasks.c','wake time reached: sns to ready list 2, returns true','rtos','xTickCount reaches sns\'s wake time, so sns moves from the delayed list to pxReadyTasksLists[2]. Priority 2 is higher than idle (0) or log (1), so it returns true: a switch is needed.','ready (list 2)','log / idle'],
+['14','vTaskSwitchContext','tasks.c','list 2 is highest non-empty: pxCurrentTCB = sns','rtos','Scans from the top: list 3 (btn) is empty, list 2 holds sns, so pxCurrentTCB = sns.','ready (list 2)','switching to sns'],
+['15','portRESTORE_CONTEXT','port.c','SP from sns TCB; return after vTaskDelay','rtos','SP is loaded from sns\'s TCB and its registers are popped. Execution resumes right after the vTaskDelay call.','ready, resuming','sns'],
+['16','sns runs','rtos_demo.ino','cycle closed: ADC read again, back to A','app','Cycle closed: sns reads the ADC again, then calls vTaskDelay, back to block 11.1. If btn (3) becomes ready at any tick or INT0, it preempts through the same 11, 12, 14, 15 path.','running','sns']];
+const SEQ=[0,1,2,3,4,5,6,7,8,9,10,7,8,9,10,11,12,13,14,15,16];
+const $=id=>document.getElementById(id);
+B.forEach((b,i)=>{const d=document.createElement('div');d.className='blk';d.style.background=C[b[4]];d.innerHTML='<b>'+b[0]+'  '+b[1]+'</b><code>'+b[2]+'</code><span>'+b[3]+'</span>';
+ d.onclick=()=>{cancel();jump(SEQ.indexOf(i))};b.el=d;$(i<6?'r1':i<11?'r2':'r3').appendChild(d);
+ if(i===10){const n=document.createElement('div');n.className='note';n.textContent='Repeats about 32 times, every 15 ms, until the tick count reaches sns\'s wake time (33 ticks). Shown twice here.';$('r2').appendChild(n)}});
+const stage=$('stage'),ball=$('ball');let p=0,tick=0,playing=true,tm=null,raf=0;
+function rect(i){const r=B[i].el.getBoundingClientRect(),s=stage.getBoundingClientRect();return{l:r.left-s.left,r:r.right-s.left,t:r.top-s.top,b:r.bottom-s.top,cx:(r.left+r.right)/2-s.left,cy:(r.top+r.bottom)/2-s.top}}
+function path(a,b){const A=rect(a),T=rect(b);let pts,kind;
+ if(Math.abs(A.cy-T.cy)<10&&T.cx>A.cx){kind='fwd';pts=[[A.cx,A.cy],[T.cx,T.cy]]}
+ else if(T.cy<A.cy-10){kind='left';const y=A.b+16;pts=[[A.cx,A.cy],[A.cx,y],[-12,y],[-12,T.cy],[T.cx,T.cy]]}
+ else if(Math.abs(A.cy-T.cy)<10){kind='back';const y=A.b+14;pts=[[A.cx,A.cy],[A.cx,y],[T.cx,y],[T.cx,T.cy]]}
+ else{kind='down';const y=(A.b+T.t)/2;pts=[[A.cx,A.cy],[A.cx,y],[T.cx,y],[T.cx,T.cy]]}
+ return{pts,kind,A,T}}
+function lines(){const s=stage.getBoundingClientRect(),L=$('ln');L.setAttribute('width',s.width);L.setAttribute('height',s.height);
+ let h='<defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--ln)"/></marker></defs>';const seen={};
+ for(let k=0;k<SEQ.length;k++){const a=SEQ[k],b=SEQ[(k+1)%SEQ.length],key=a+'-'+b;if(seen[key])continue;seen[key]=1;
+  const{pts,kind,A,T}=path(a,b),q=pts.map(x=>x.slice());
+  if(kind==='fwd'){q[0]=[A.r,A.cy];q[1]=[T.l,T.cy]}else{q[0]=[A.cx,A.b];const e=q.length-1;q[e]=kind==='left'?[T.l,T.cy]:kind==='back'?[T.cx,T.b]:[T.cx,T.t]}
+  h+='<polyline points="'+q.map(x=>x.join(',')).join(' ')+'" fill="none" stroke="var(--ln)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#a)"/>'}
+ L.innerHTML=h}
+function place(){const r=rect(SEQ[p]);ball.style.left=r.cx+'px';ball.style.top=r.cy+'px'}
+function show(){const i=SEQ[p],b=B[i];B.forEach((x,k)=>x.el.classList.toggle('on',k===i));b.el.classList.add('seen');
+ if(i===7&&SEQ[p-1]===6||i===7&&SEQ[p-1]===10)tick++;
+ const extra=i===7?' <b>Tick '+tick+' of about 32 (before the wake tick).</b>':i===11?' <b>This is tick 33.</b>':'';
+ $('cn').textContent=b[0];$('cn').style.background=C[b[4]];
+ $('ct').innerHTML='<b>'+b[1]+'</b><code>'+b[2]+'</code><p>'+b[5]+extra+'</p><div class="chips"><span>sns state: <b>'+b[6]+'</b></span><span>CPU runs: <b>'+b[7]+'</b></span></div>'}
+function jump(k){p=k;tick=k>=11?33:k>=7?1:0;place();show()}
+function move(a,b,done){const q=path(a,b).pts;let tot=0;const seg=[];for(let k=1;k<q.length;k++){const l=Math.hypot(q[k][0]-q[k-1][0],q[k][1]-q[k-1][1]);seg.push(l);tot+=l}
+ const dur=700,t0=performance.now();
+ const f=t=>{let d=Math.min((t-t0)/dur,1)*tot,k=0;while(k<seg.length-1&&d>seg[k]){d-=seg[k];k++}
+  const u=seg[k]?d/seg[k]:1,P=q[k],Q=q[k+1];ball.style.left=P[0]+(Q[0]-P[0])*u+'px';ball.style.top=P[1]+(Q[1]-P[1])*u+'px';
+  if(t-t0<dur)raf=requestAnimationFrame(f);else done()};raf=requestAnimationFrame(f)}
+function cancel(){clearTimeout(tm);cancelAnimationFrame(raf)}
+function step(){cancel();const a=SEQ[p],n=(p+1)%SEQ.length,b=SEQ[n];if(n===0)tick=0;
+ move(a,b,()=>{p=n;show();if(playing)tm=setTimeout(step,+$('sp').value)})}
+$('pp').onclick=e=>{playing=!playing;e.target.textContent=playing?'Pause':'Play';if(playing){cancel();tm=setTimeout(step,300)}else cancel()};
+$('st').onclick=()=>{playing=false;$('pp').textContent='Play';step()};
+$('rs').onclick=()=>{cancel();B.forEach(b=>b.el.classList.remove('seen'));jump(0);if(playing)tm=setTimeout(step,+$('sp').value)};
+addEventListener('resize',()=>{lines();place()});
+lines();jump(0);tm=setTimeout(step,+$('sp').value);
+</script></main></body></html>

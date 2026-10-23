@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arduino Uno + FreeRTOS: reset to task switching</title>
+<style>
+:root{--bg:#f7f8fa;--fg:#1f2937;--mut:#6b7280;--card:#fff;--ln:#9ca3af;box-sizing:border-box;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f172a;--fg:#e5e7eb;--mut:#9ca3af;--card:#1e293b;--ln:#64748b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f172a;--fg:#e5e7eb;--mut:#9ca3af;--card:#1e293b;--ln:#64748b;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1240px;margin:0 auto;padding:14px 16px 28px}
+.top{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+h1{font-size:22px;margin:0;margin-right:auto}
+.lg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mut)}.lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
+button,select{font:inherit;font-size:14px;padding:7px 14px;border-radius:8px;border:1px solid var(--ln);background:var(--card);color:var(--fg);cursor:pointer}
+.lab{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--mut);margin:0 0 8px}
+#stage{position:relative}
+.row{display:grid;gap:30px;margin-bottom:38px}.r5{grid-template-columns:repeat(5,1fr)}.r6{grid-template-columns:repeat(6,1fr);gap:18px;margin-bottom:0}
+@media(max-width:900px){.r5{grid-template-columns:repeat(2,1fr)}.r6{grid-template-columns:repeat(2,1fr)}}
+.blk{border-radius:10px;color:#fff;padding:10px 12px;min-height:104px;opacity:.55;transition:opacity .3s,box-shadow .3s;cursor:pointer}
+.blk.seen{opacity:.92}.blk.on{opacity:1;box-shadow:0 0 0 4px #f59e0b}
+.blk b{display:block;font-size:15px}.blk code{display:block;font-size:11.5px;opacity:.92;margin:3px 0 5px;word-break:break-all}.blk span{font-size:13.5px}
+#ln{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+#ball{position:absolute;left:0;top:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:5;pointer-events:none}
+#cap{margin-top:22px;background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px 16px;display:flex;gap:14px;align-items:center}
+#cn{flex:none;width:38px;height:38px;border-radius:9px;color:#fff;font-weight:700;display:grid;place-items:center;font-size:17px}
+#ct b{font-size:17px}#ct code{margin-left:10px;font-size:12.5px;color:var(--mut)}#ct p{margin:4px 0 0;font-size:14.5px;line-height:1.45}
+</style></head><body><main>
+<div class="top"><h1>Arduino Uno + FreeRTOS: from reset to task switching</h1>
+<div class="lg"><span><i style="background:#6b7280"></i>hardware</span><span><i style="background:#b45309"></i>bootloader</span><span><i style="background:#1d4ed8"></i>toolchain</span><span><i style="background:#047857"></i>Arduino core</span><span><i style="background:#7c3aed"></i>FreeRTOS</span><span><i style="background:#be185d"></i>your code</span></div></div>
+<div class="bar"><button id="pp">Pause</button><button id="st">Step</button><button id="rs">Restart</button><select id="sp"><option value="2600">Slow</option><option value="1700" selected>Normal</option><option value="900">Fast</option></select></div>
+<div id="stage">
+<svg id="ln"></svg><div id="ball"></div>
+<p class="lab">BOOT (once)</p>
+<div class="row r5" id="r1"></div>
+<div class="row r5" id="r2"></div>
+<p class="lab">TASK SWITCHING (repeats on every tick, interrupt or block)</p>
+<div class="row r6" id="r3"></div>
+</div>
+<div id="cap"><div id="cn"></div><div id="ct"></div></div>
+<script>
+const C={hw:'#6b7280',boot:'#b45309',tool:'#1d4ed8',core:'#047857',rtos:'#7c3aed',app:'#be185d'};
+const B=[
+['Reset','AVR hardware','PC = 0x7E00','hw','The BOOTRST fuse sends the program counter to the boot section. No BIOS, no OS.'],
+['Optiboot','flash 0x7E00','waits ~1 s for avrdude, then jmp 0','boot','Waits for an upload. With none (or after a watchdog reset) it jumps to the application at 0x0000.'],
+['Vector table','flash 0x0000','jmp __ctors_end','tool','Entry 0 jumps to the C runtime init. The other entries are ISRs (INT0, WDT).'],
+['C runtime init','avr-libc .init2-.init9','SP, .data, .bss, jmp main','tool','Sets SP = RAMEND and r1 = 0, copies .data, zeroes .bss, then jumps to main().'],
+['main()','core/main.cpp','init(); initVariant();','core','Standard Arduino main. With FreeRTOS it never reaches loop().'],
+['init()','core/wiring.c','Timer0, ADC, sei()','core','Core hardware setup; interrupts are enabled.'],
+['initVariant()','FreeRTOS/variantHooks.cpp','setup(); vTaskStartScheduler();','rtos','The library overrides the core\'s empty initVariant(). It calls your setup(), then starts the scheduler, and never returns.'],
+['setup()','rtos_demo.ino','queue, sem, mutex, 3 tasks','app','Creates log_queue, button_sem, led_mutex and the tasks btn (3), sns (2), log (1). Nothing runs yet.'],
+['vTaskStartScheduler','FreeRTOS/tasks.c','creates idle task','rtos','Adds the idle task (priority 0), disables interrupts, calls the port layer.'],
+['xPortStartScheduler','FreeRTOS/port.c','starts 15 ms tick, first task runs','rtos','Starts the watchdog tick and restores the first task\'s context. main() is abandoned.'],
+['Interrupt / yield','port.c','tick, INT0 or task blocks','hw','Three triggers: the 15 ms tick, the button (INT0), or a task blocking on a queue, semaphore or delay.'],
+['portSAVE_CONTEXT','portmacro.h','push r0-r31, SP to TCB','rtos','Freezes the running task on its own stack and stores its stack pointer in its TCB.'],
+['xTaskIncrementTick','tasks.c','++tick, wake delayed tasks','rtos','Counts the tick and moves tasks whose delay expired to the ready list.'],
+['vTaskSwitchContext','tasks.c','pick highest ready priority','rtos','Scans the ready lists from the highest priority down and sets pxCurrentTCB. Equal priorities take turns.'],
+['portRESTORE_CONTEXT','portmacro.h','SP from TCB, pop r31-r0','rtos','Loads the chosen task\'s stack pointer, pops its registers and returns into it.'],
+['Task runs','btn 3 > sns 2 > log 1 > idle 0','your code','app','Runs until it blocks, is preempted or the next tick arrives. Then the loop repeats.']];
+const PASS=['btn blocked on its semaphore, so sns (2) is chosen','sns is delayed and log has printed, so idle (0) is chosen','INT0 woke btn (3), so btn preempts idle','a tick woke sns (2), so sns preempts idle'];
+const $=id=>document.getElementById(id);
+B.forEach((b,i)=>{const d=document.createElement('div');d.className='blk';d.style.background=C[b[3]];d.innerHTML='<b>'+(i+1)+'  '+b[0]+'</b><code>'+b[1]+'</code><span>'+b[2]+'</span>';d.onclick=()=>{cancel();jump(i)};b.el=d;$(i<5?'r1':i<10?'r2':'r3').appendChild(d)});
+const stage=$('stage'),ball=$('ball');let idx=0,pass=0,playing=true,tm=null,raf=0;
+function rect(i){const r=B[i].el.getBoundingClientRect(),s=stage.getBoundingClientRect();return{l:r.left-s.left,r:r.right-s.left,t:r.top-s.top,b:r.bottom-s.top,cx:(r.left+r.right)/2-s.left,cy:(r.top+r.bottom)/2-s.top}}
+function path(a,b){const A=rect(a),T=rect(b);if(Math.abs(A.cy-T.cy)<10&&b>a)return[[A.cx,A.cy],[T.cx,T.cy]];
+ const gy=T.cy>A.cy?(A.b+T.t)/2:A.b+16;return[[A.cx,A.cy],[A.cx,gy],[T.cx,gy],[T.cx,T.cy]]}
+const next=i=>i===15?10:i+1;
+function lines(){const s=stage.getBoundingClientRect();const L=$('ln');L.setAttribute('width',s.width);L.setAttribute('height',s.height);
+ let h='<defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--ln)"/></marker></defs>';
+ for(let i=0;i<16;i++){const a=i,b=next(i),A=rect(a),T=rect(b),p=path(a,b);
+  const same=Math.abs(A.cy-T.cy)<10&&b>a;let q=p.map(x=>x.slice());
+  if(same){q[0][0]=A.cx<T.cx?A.r:A.l;q[1][0]=A.cx<T.cx?T.l:T.r}else{q[0]=[A.cx,A.cy>T.cy?A.b:A.b];q[q.length-1]=[T.cx,T.cy>A.cy?T.t:T.b]}
+  h+='<polyline points="'+q.map(x=>x.join(',')).join(' ')+'" fill="none" stroke="var(--ln)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#a)"/>'}
+ L.innerHTML=h}
+function place(i){const r=rect(i);ball.style.left=r.cx+'px';ball.style.top=r.cy+'px'}
+function show(i){idx=i;B.forEach((b,k)=>b.el.classList.toggle('on',k===i));B[i].el.classList.add('seen');const b=B[i];
+ $('cn').textContent=i+1;$('cn').style.background=C[b[3]];
+ $('ct').innerHTML='<b>'+b[0]+'</b><code>'+b[1]+'</code><p>'+b[4]+(i===13?' <b>This pass: '+PASS[pass%4]+'.</b>':'')+'</p>'}
+function jump(i){place(i);show(i)}
+function move(a,b,done){const p=path(a,b);let tot=0;const seg=[];for(let k=1;k<p.length;k++){const l=Math.hypot(p[k][0]-p[k-1][0],p[k][1]-p[k-1][1]);seg.push(l);tot+=l}
+ const dur=650,t0=performance.now();
+ const f=t=>{let d=Math.min((t-t0)/dur,1)*tot,k=0;while(k<seg.length-1&&d>seg[k]){d-=seg[k];k++}
+  const q=seg[k]?d/seg[k]:1,P=p[k],Q=p[k+1];ball.style.left=P[0]+(Q[0]-P[0])*q+'px';ball.style.top=P[1]+(Q[1]-P[1])*q+'px';
+  if(t-t0<dur)raf=requestAnimationFrame(f);else done()};raf=requestAnimationFrame(f)}
+function cancel(){clearTimeout(tm);cancelAnimationFrame(raf)}
+function step(){cancel();const a=idx,b=next(a);if(a===15)pass++;move(a,b,()=>{show(b);if(playing)tm=setTimeout(step,+$('sp').value)})}
+$('pp').onclick=e=>{playing=!playing;e.target.textContent=playing?'Pause':'Play';if(playing){cancel();tm=setTimeout(step,300)}else cancel()};
+$('st').onclick=()=>{playing=false;$('pp').textContent='Play';step()};
+$('rs').onclick=()=>{cancel();pass=0;B.forEach(b=>b.el.classList.remove('seen'));jump(0);if(playing)tm=setTimeout(step,+$('sp').value)};
+addEventListener('resize',()=>{lines();place(idx)});
+lines();jump(0);tm=setTimeout(step,+$('sp').value);
+</script></main></body></html>
