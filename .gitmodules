@@ -1,6 +1,6 @@
 [submodule "hardware/arduino/avr"]
 	path = hardware/arduino/avr
-	url = git@github.com:albertminasyan/ArduinoCore-avr.git
+	url = https://github.com/albertminasyan/ArduinoCore-avr.git
 [submodule "libraries/FreeRTOS"]
 	path = libraries/FreeRTOS
-	url = git@github.com:albertminasyan/Arduino_FreeRTOS_Library.git
+	url = https://github.com/albertminasyan/Arduino_FreeRTOS_Library.git
